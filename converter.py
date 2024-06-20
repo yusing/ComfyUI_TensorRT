@@ -424,7 +424,7 @@ class Tensor2RTConvertor:
 
             self._save_timing_cache(config)
 
-            del builder, network, config
+            del builder, network, config, serialized_engine
             comfy.model_management.soft_empty_cache()
             gc.collect()
 
