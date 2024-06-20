@@ -184,8 +184,8 @@ def Engine(
     if engine_info.y_dim > 0:
         conf = conf_init({"adm_in_channels": engine_info.y_dim})
     else:
-        conf = conf_init(engine_info.model_config_init)({})
-    conf.unet_config = conf_init.unet_config.copy()  # copy from its class
+        conf = conf_init({})
+    conf.unet_config = conf_init.unet_config.copy()  # copy from original class
     conf.unet_config["disable_unet_model_creation"] = True
 
     model_init = deserialize(engine_info.model_init)
