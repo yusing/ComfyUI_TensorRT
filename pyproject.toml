@@ -1,0 +1,21 @@
+[project]
+name = "comfyui_torchtensorrt"
+description = "TensorRT Node for ComfyUI\nThis node enables the best performance on NVIDIA RTX™ Graphics Cards  (GPUs) for Stable Diffusion by leveraging NVIDIA TensorRT."
+version = "0.0.1"
+license = "LICENSE"
+dependencies = [
+    "setuptools<60",
+    "tensorrt-cu12==10.1.0",
+    "tensorrt-cu12_bindings==10.1.0",
+    "tensorrt-cu12_libs==10.1.0",
+    "cuda-python==12.5.0",
+    "tqdm",
+]
+
+[project.urls]
+Repository = "https://github.com/yusing/ComfyUI_TensorRT"
+
+[tool.comfy]
+PublisherId = "yusing"
+DisplayName = "ComfyUI_TorchTensorRT"
+Icon = ""
