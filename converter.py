@@ -248,7 +248,6 @@ class Tensor2RTConvertor:
         comfy.model_management.unload_all_models()
         comfy.model_management.soft_empty_cache()
 
-        # model, clip, vae = nodes.CheckpointLoaderSimple().load_checkpoint(model_path)
         model, *_ = self.load_checkpoint(model_path, clip=False, vae=False)
         comfy.model_management.load_models_gpu([model], force_patch_weights=True)
         dtype = model.model.get_dtype() or torch.float16
@@ -289,7 +288,6 @@ class Tensor2RTConvertor:
         if context_dim is None:
             raise Exception("Unsupported model, could not determine context dim")
         engine_info.context_dim = int(context_dim)
-        engine_info.y_dim = int(model.model.adm_channels)
         dynamic_axes = {
             "x": {0: "batch", 2: "height", 3: "width"},
             "timesteps": {0: "batch"},
@@ -300,11 +298,12 @@ class Tensor2RTConvertor:
 
         if os.path.exists(engine_path) and os.path.exists(engine_info_path):
             try:
-                engine = load_engine(engine_path, engine_info, engine_info_path)
                 del model
                 comfy.model_management.unload_all_models()
                 comfy.model_management.soft_empty_cache()
                 gc.collect()
+                
+                engine = load_engine(engine_path, engine_info, engine_info_path)
                 _, clip, vae, _ = self.load_checkpoint(model_path, model=False)
                 self.last_path = model_path
                 self.last_results = (
