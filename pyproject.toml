@@ -5,11 +5,12 @@ version = "0.0.1"
 license = "LICENSE"
 dependencies = [
     "setuptools<60",
-    "tensorrt-cu12==10.1.0",
-    "tensorrt-cu12_bindings==10.1.0",
-    "tensorrt-cu12_libs==10.1.0",
-    "cuda-python==12.5.0",
+    "tensorrt-cu12>=10.1.0",
+    "tensorrt-cu12_bindings>=10.1.0",
+    "tensorrt-cu12_libs>=10.1.0",
+    "cuda-python",
     "tqdm",
+    "onnx",
 ]
 
 [project.urls]
