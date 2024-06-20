@@ -1,6 +1,5 @@
 from dataclasses import dataclass, asdict, is_dataclass
 import json
-from typing import Callable
 
 
 @dataclass

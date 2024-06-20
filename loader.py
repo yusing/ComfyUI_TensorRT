@@ -162,8 +162,8 @@ class Unet:
         # (err,) = cuda.cudart.cudaDeviceSynchronize()
         for s in streams:
             cuda.cudart.cudaStreamDestroy(s)
-        if err != cuda.cudart.cudaError_t.cudaSuccess:
-            raise RuntimeError(f"cudaStreamSynchronize failed with error {err}")
+        # if err != cuda.cudart.cudaError_t.cudaSuccess:
+        #     raise RuntimeError(f"cudaStreamSynchronize failed with error {err}")
         return out
 
     def load_state_dict(self, sd, strict=False):
