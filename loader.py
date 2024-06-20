@@ -67,7 +67,7 @@ class Unet:
         engine_info: EngineInfo,
     ) -> None:
         self.engine = engine
-        # self.engine.weight_streaming_budget_v2 = 2 << 30  # 2 GB
+        self.engine.weight_streaming_budget_v2 = 4 << 30  # TODO: add an option to customize this
         self.context = self.engine.create_execution_context()
         self.dtype = dtype_from_str(engine_info.dtype)
         self.input_names = ["x", "timesteps", "context"]
@@ -82,6 +82,7 @@ class Unet:
                 self.input_names,
             )
         )
+        self.forward = self.__call__
 
     def set_bindings_shape(self, inputs, split_batch):
         for k in inputs:
