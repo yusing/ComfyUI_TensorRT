@@ -32,10 +32,11 @@ OUTPUT_NAMES = ["o"]
 MIN_BATCHES = 1
 MAX_BATCHES = 50
 MIN_HEIGHT = 512
-MAX_HEIGHT = 2048
+MAX_HEIGHT = 4096
 MIN_WIDTH = 512
-MAX_WIDTH = 2048
+MAX_WIDTH = 4096
 DEFAULT_OPT_LEVEL = 3
+MIN_OPT_LEVEL = 1
 MAX_OPT_LEVEL = 5
 
 
@@ -135,27 +136,27 @@ class Tensor2RTConvertor:
                 "batch_size": (
                     "INT",
                     {
-                        "default": 1,
-                        "min": 1,
-                        "max": 100,
+                        "default": MIN_BATCHES,
+                        "min": MIN_BATCHES,
+                        "max": MAX_BATCHES,
                         "step": 1,
                     },
                 ),
                 "height": (
                     "INT",
                     {
-                        "default": 512,
-                        "min": 256,
-                        "max": 4096,
+                        "default": MIN_HEIGHT,
+                        "min": MIN_HEIGHT,
+                        "max": MAX_HEIGHT,
                         "step": 64,
                     },
                 ),
                 "width": (
                     "INT",
                     {
-                        "default": 512,
-                        "min": 256,
-                        "max": 4096,
+                        "default": MIN_WIDTH,
+                        "min": MIN_WIDTH,
+                        "max": MAX_WIDTH,
                         "step": 64,
                     },
                 ),
@@ -163,7 +164,7 @@ class Tensor2RTConvertor:
                     "INT",
                     {
                         "default": DEFAULT_OPT_LEVEL,
-                        "min": 0,
+                        "min": MIN_OPT_LEVRL,
                         "max": MAX_OPT_LEVEL,
                         "step": 1,
                     },
