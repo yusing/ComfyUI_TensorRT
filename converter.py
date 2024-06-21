@@ -1,7 +1,7 @@
 from os import path
 import gc
 import os
-from typing import Any
+from typing import Any, Optional
 import torch
 import tensorrt as trt
 from tqdm import tqdm
@@ -14,8 +14,9 @@ import comfy.supported_models_base
 import folder_paths
 import nodes
 
+from .lora_stacker import StackedLora
 from .engine_info import EngineInfo
-from .loader import Engine, load_engine
+from .loader import load_engine
 from .paths import (
     CACHE_PATH,
     ENGINE_EXT,
@@ -86,7 +87,8 @@ class TQDMProgressMonitor(trt.IProgressMonitor):
                 "parent_phase": parent_phase,
             }
         except KeyboardInterrupt:
-            # The phase_start callback cannot directly cancel the build, so request the cancellation from within step_complete.
+            # The phase_start callback cannot directly cancel the build,
+            # so request the cancellation from within step_complete.
             _step_result = False
 
     def phase_finish(self, phase_name):
@@ -131,6 +133,9 @@ class Tensor2RTConvertor:
     @classmethod
     def INPUT_TYPES(s):
         return {
+            "optional": {
+                "lora_stack": ("TRT_LORA_STACK",),
+            },
             "required": {
                 "model_path": (folder_paths.get_filename_list("checkpoints"),),
                 "batch_size": (
@@ -164,12 +169,12 @@ class Tensor2RTConvertor:
                     "INT",
                     {
                         "default": DEFAULT_OPT_LEVEL,
-                        "min": MIN_OPT_LEVRL,
+                        "min": MIN_OPT_LEVEL,
                         "max": MAX_OPT_LEVEL,
                         "step": 1,
                     },
                 ),
-                "rebuild_if_required": ("BOOLEAN", {"default": False}),
+                "force_rebuild": ("BOOLEAN", {"default": False}),
             },
         }
 
@@ -185,8 +190,7 @@ class Tensor2RTConvertor:
         "width",
     )
     FUNCTION = "convert"
-    # OUTPUT_NODE = True
-    CATEGORY = "TorchTensorRT"
+    CATEGORY = "TorchTensorRT/Load Checkpoint"
 
     ReturnType = tuple[Any, Any, Any, Any, str, int, int, int]
 
@@ -227,7 +231,6 @@ class Tensor2RTConvertor:
         self.last_path: str = ""
         self.last_results: Tensor2RTConvertor.ReturnType
 
-    # TODO: refit https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#refitting-engine-c
     def convert(
         self,
         model_path: str,
@@ -235,7 +238,8 @@ class Tensor2RTConvertor:
         height: int,
         width: int,
         optimization_level: int = DEFAULT_OPT_LEVEL,
-        rebuild_if_required: bool = False,
+        force_rebuild: bool = False,
+        lora_stack: Optional[StackedLora] = None,
     ) -> ReturnType:
         if path == self.last_path:
             return self.last_results
@@ -244,14 +248,45 @@ class Tensor2RTConvertor:
 
         engine_path = path.join(OUTPUT_PATH, model_name + ENGINE_EXT)
         engine_info_path = engine_path + ENGINE_INFO_EXT
-        onnx_cache_file = path.join(CACHE_PATH, model_name, model_name + ONNX_EXT)
+        onnx_path = path.join(CACHE_PATH, model_name, model_name + ONNX_EXT)
+
+        def load():
+            comfy.model_management.unload_all_models()
+            comfy.model_management.soft_empty_cache()
+            gc.collect()
+
+            engine = load_engine(engine_path, engine_info_path, onnx_path, lora_stack)
+            _, clip, vae, _ = self.load_checkpoint(model_path, model=False)
+            self.last_path = model_path
+            self.last_results = (
+                engine,
+                clip,
+                vae,
+                nodes.EmptyLatentImage().generate(width, height, batch_size=batch_size)[
+                    0
+                ],
+                model_name,
+                batch_size,
+                height,
+                width,
+            )
+            return self.last_results
+
+        if (
+            not force_rebuild
+            and os.path.exists(engine_path)
+            and os.path.exists(engine_info_path)
+        ):
+            return load()
 
         comfy.model_management.unload_all_models()
         comfy.model_management.soft_empty_cache()
 
         model, *_ = self.load_checkpoint(model_path, clip=False, vae=False)
-        comfy.model_management.load_models_gpu([model], force_patch_weights=True)
-        dtype = model.model.get_dtype() or torch.float16
+        # comfy.model_management.load_models_gpu([model], force_patch_weights=True)
+
+        dtype = model.model.diffusion_model.dtype or torch.float16
+        device = comfy.model_management.get_torch_device()
 
         engine_info = EngineInfo(
             min_batch=half(batch_size, MIN_BATCHES, MAX_BATCHES),
@@ -274,7 +309,15 @@ class Tensor2RTConvertor:
             model_init=serialize(model.model.__class__),
         )
 
-        device = comfy.model_management.get_torch_device()
+        dynamic_axes = {
+            "x": {0: "batch", 2: "height", 3: "width"},
+            "timesteps": {0: "batch"},
+            "context": {0: "batch", 1: "num_embeds"},
+        }
+        if engine_info.y_dim > 0:
+            dynamic_axes["y"] = {0: "batch"}
+
+        assert model.model.diffusion_model is not None
         context_dim = model.model.model_config.unet_config.get("context_dim", None)
         if context_dim is None:  # SD3
             context_embedder_config = model.model.model_config.unet_config.get(
@@ -289,61 +332,17 @@ class Tensor2RTConvertor:
         if context_dim is None:
             raise Exception("Unsupported model, could not determine context dim")
         engine_info.context_dim = int(context_dim)
-        dynamic_axes = {
-            "x": {0: "batch", 2: "height", 3: "width"},
-            "timesteps": {0: "batch"},
-            "context": {0: "batch", 1: "num_embeds"},
-        }
-        if engine_info.y_dim > 0:
-            dynamic_axes["y"] = {0: "batch"}
 
-        if os.path.exists(engine_path) and os.path.exists(engine_info_path):
-            try:
-                del model
-                comfy.model_management.unload_all_models()
-                comfy.model_management.soft_empty_cache()
-                gc.collect()
-                
-                engine = load_engine(engine_path, engine_info, engine_info_path)
-                _, clip, vae, _ = self.load_checkpoint(model_path, model=False)
-                self.last_path = model_path
-                self.last_results = (
-                    engine,
-                    clip,
-                    vae,
-                    nodes.EmptyLatentImage().generate(
-                        width, height, batch_size=batch_size
-                    )[0],
-                    model_name,
-                    batch_size,
-                    height,
-                    width,
-                )
-                return self.last_results
-            except Exception as e:
-                if not rebuild_if_required:
-                    raise e
-                if os.path.exists(engine_info_path):  # corrupted info file?
-                    os.remove(engine_info_path)
-                return self.convert(
-                    model_path,
-                    batch_size,
-                    height,
-                    width,
-                    optimization_level=optimization_level,
-                    rebuild_if_required=True,
-                )
-
-        min_shapes = engine_info.min_shapes()
-        opt_shapes = engine_info.opt_shapes()
-        max_shapes = engine_info.max_shapes()
-
-        assert model.model.diffusion_model is not None
+        min_shapes, opt_shapes, max_shapes = (
+            engine_info.min_shapes(),
+            engine_info.opt_shapes(),
+            engine_info.max_shapes(),
+        )
 
         os.makedirs(os.path.dirname(engine_path), exist_ok=True)
-        os.makedirs(os.path.dirname(onnx_cache_file), exist_ok=True)
+        os.makedirs(os.path.dirname(onnx_path), exist_ok=True)
 
-        if not os.path.exists(onnx_cache_file):
+        if force_rebuild or not os.path.exists(onnx_path):
             torch.onnx.export(
                 ComfyDiffusionModel(
                     model.model.diffusion_model,
@@ -355,20 +354,20 @@ class Tensor2RTConvertor:
                         opt_shapes,
                     )
                 ),
-                f=onnx_cache_file,
+                f=onnx_path,
                 input_names=INPUT_NAMES,
                 output_names=OUTPUT_NAMES,
                 opset_version=17,
                 dynamic_axes=dynamic_axes,
+                # export_params=False,
                 verbose=False,
             )
 
         del model
         comfy.model_management.unload_all_models()
         comfy.model_management.soft_empty_cache()
-        gc.collect()
 
-        if not os.path.exists(engine_path):
+        if force_rebuild or not os.path.exists(engine_path):
             logger = trt.Logger(trt.Logger.INFO)
             builder = trt.Builder(logger)
             network = builder.create_network(
@@ -376,8 +375,9 @@ class Tensor2RTConvertor:
                 | (1 << int(trt.NetworkDefinitionCreationFlag.STRONGLY_TYPED))
             )
             parser = trt.OnnxParser(network, logger)
+            parser.set_flag(trt.OnnxParserFlag.NATIVE_INSTANCENORM)
 
-            success = parser.parse_from_file(onnx_cache_file)
+            success = parser.parse_from_file(onnx_path)
             for idx in range(parser.num_errors):
                 print(parser.get_error(idx))
             if not success:
@@ -394,16 +394,8 @@ class Tensor2RTConvertor:
             config.set_flag(
                 trt.BuilderFlag.WEIGHT_STREAMING
             )  # save some VRAM by allowing weights to be streamed in
-            config.set_flag(trt.BuilderFlag.SPARSE_WEIGHTS)
-            config.set_flag(trt.BuilderFlag.DIRECT_IO)
-            # config.set_flag(trt.BuilderFlag.REFIT)
+            # config.set_flag(trt.BuilderFlag.STRIP_PLAN)
             # config.set_flag(trt.BuilderFlag.REFIT_IDENTICAL)
-            # config.set_flag(trt.BuilderFlag.VERSION_COMPATIBLE)
-            # config.set_flag(trt.BuilderFlag.EXCLUDE_LEAN_RUNTIME)
-
-            # config.set_memory_pool_limit(
-            #     trt.MemoryPoolType.WORKSPACE, self.get_available_vram()
-            # )
             config.progress_monitor = TQDMProgressMonitor()
             self._setup_timing_cache(config)
 
@@ -430,11 +422,4 @@ class Tensor2RTConvertor:
 
         engine_info.dump(engine_info_path)
 
-        return self.convert(
-            model_path,
-            batch_size,
-            height,
-            width,
-            optimization_level=optimization_level,
-            rebuild_if_required=rebuild_if_required,
-        )
+        return load()

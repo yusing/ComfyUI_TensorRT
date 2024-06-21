@@ -1,5 +1,5 @@
 import gc
-import os
+from typing import Optional
 import cuda.cudart
 import torch
 
@@ -11,6 +11,9 @@ import comfy.model_base
 import comfy.model_management
 import comfy.model_patcher
 import comfy.supported_models
+import comfy.utils
+
+from .lora_stacker import StackedLora
 from .utils import deserialize
 from .engine_info import EngineInfo
 
@@ -67,7 +70,9 @@ class Unet:
         engine_info: EngineInfo,
     ) -> None:
         self.engine = engine
-        self.engine.weight_streaming_budget_v2 = 4 << 30  # TODO: add an option to customize this
+        self.engine.weight_streaming_budget_v2 = (
+            4 << 30
+        )  # TODO: add an option to customize this
         self.context = self.engine.create_execution_context()
         self.dtype = dtype_from_str(engine_info.dtype)
         self.input_names = ["x", "timesteps", "context"]
@@ -174,13 +179,69 @@ class Unet:
         return {}
 
 
+class Engine:
+    def __init__(self, cuda_eng, eng_info: EngineInfo):
+        self.model = cuda_eng
+        self.load_device = comfy.model_management.get_torch_device()
+        self.offload_device = self.load_device
+        self.current_device = self.load_device
+        self.model_options = {"transformer_options": {}}
+        self.info = eng_info
+
+    def memory_required(self, *args, **kwargs):
+        return 0
+
+    def model_size(self):
+        return 0
+
+    def model_dtype(self):
+        return dtype_from_str(self.info.dtype)
+
+    def model_patches_to(self, _):
+        pass
+
+    def clone(self):
+        return self
+
+    def is_clone(self, _):
+        return False
+
+    def add_patches(self, *args, **kwargs):
+        return []
+
+    def get_model_object(self, name):
+        return comfy.utils.get_attr(self.model, name)
+
+    def model_state_dict(self, filter_prefix=None):
+        return {}
+
+    def patch_model(self, device_to=None, patch_weights=True):
+        pass
+
+    def patch_model_lowvram(
+        self, device_to=None, lowvram_model_memory=0, force_patch_weights=False
+    ):
+        pass
+
+    def unpatch_model(self, device_to=None, unpatch_weights=True):
+        pass
+
+
 # TODO: cuda graph https://docs.nvidia.com/deeplearning/tensorrt/developer-guide/index.html#optimize-performance
-
-
-def Engine(
+def load_engine(
     engine_path: str,
-    engine_info: EngineInfo,
+    engine_info_path: str,
+    onnx_path: str,
+    lora_stack: Optional[StackedLora],
 ):
+    if lora_stack is not None:
+        del model
+        comfy.model_management.unload_all_models()
+        comfy.model_management.soft_empty_cache()
+
+    # TODO: lora
+
+    engine_info = EngineInfo.load(engine_info_path)
     conf_init = deserialize(engine_info.model_config_init)
     if engine_info.y_dim > 0:
         conf = conf_init({"adm_in_channels": engine_info.y_dim})
@@ -200,29 +261,5 @@ def Engine(
     gc.collect()
 
     eng.diffusion_model = Unet(cuda_eng, engine_info)
-    eng.memory_required = lambda *args, **kwargs: 0
-    return eng
 
-
-def load_engine(
-    engine_path: str,
-    engine_info_inf: EngineInfo,
-    engine_info_val_path: str,
-):
-    assert os.path.exists(
-        engine_info_val_path
-    ), "should not call load_engine before checking for engine_info_val_path"
-
-    engine_info_val = EngineInfo.load(engine_info_val_path)
-    if not engine_info_val.verify(engine_info_inf):
-        raise Exception(
-            """Engine shape out of bounds / info mismatch,
-            try reducing 'batch_size', 'height' or 'width',
-            or toggle on 'rebuild_if_required' to rebuild"""
-        )
-
-    return comfy.model_patcher.ModelPatcher(
-        Engine(engine_path, engine_info_inf),
-        load_device=comfy.model_management.get_torch_device(),
-        offload_device=comfy.model_management.unet_offload_device(),
-    )
+    return Engine(eng, engine_info)
