@@ -8,7 +8,7 @@ Similar to [https://github.com/comfyanonymous/ComfyUI_TensorRT], but builds 2-3x
 
 1. Clone the repository into `ComfyUI\custom_nodes`
 2. Activate virtual environment `ComfyUI\venv\Scripts\activate.bat`
-3. Install dependencies `pip install -r requirements.txt`
+3. Install dependencies `pip install -r requirements.txt --extra-index-url https://pypi.nvidia.com`
 4. Start ComfyUI, load example workflow and install missing custom nodes
 5. Restart ComfyUI and call it a day
 
