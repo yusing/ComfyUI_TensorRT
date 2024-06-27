@@ -16,7 +16,7 @@ import nodes
 
 from .lora_stacker import StackedLora
 from .engine_info import EngineInfo
-from .loader import load_engine
+from .loader import Engine, load_engine
 from .paths import (
     CACHE_PATH,
     ENGINE_EXT,
@@ -192,7 +192,8 @@ class Tensor2RTConvertor:
     FUNCTION = "convert"
     CATEGORY = "TorchTensorRT/Load Checkpoint"
 
-    ReturnType = tuple[Any, Any, Any, Any, str, int, int, int]
+    LatentImage = dict[str, torch.Tensor]
+    ReturnType = tuple[Engine, Any, Any, LatentImage, str, int, int, int]
 
     # Sets up the builder to use the timing cache file, and creates it if it does not already exist
     def _setup_timing_cache(self, config: trt.IBuilderConfig):
@@ -227,9 +228,14 @@ class Tensor2RTConvertor:
             output_clipvision=False,
         )
 
+    def empty_latent_image(self, width: int, height: int, batch_size=1):
+        return nodes.EmptyLatentImage().generate(width, height, batch_size=batch_size)[
+            0
+        ]
+
     def __init__(self) -> None:
         self.last_path: str = ""
-        self.last_results: Tensor2RTConvertor.ReturnType
+        self.models: tuple[Engine, Any, Any]
 
     def convert(
         self,
@@ -241,14 +247,23 @@ class Tensor2RTConvertor:
         force_rebuild: bool = False,
         lora_stack: Optional[StackedLora] = None,
     ) -> ReturnType:
-        if path == self.last_path:
-            return self.last_results
-
         model_name = path.basename(model_path).split(".")[0]
-
         engine_path = path.join(OUTPUT_PATH, model_name + ENGINE_EXT)
         engine_info_path = engine_path + ENGINE_INFO_EXT
         onnx_path = path.join(CACHE_PATH, model_name, model_name + ONNX_EXT)
+
+        def results() -> Tensor2RTConvertor.ReturnType:
+            return (
+                *self.models,
+                self.empty_latent_image(width, height, batch_size),
+                model_name,
+                batch_size,
+                height,
+                width,
+            )
+
+        if path == self.last_path:
+            return results()
 
         def load():
             comfy.model_management.unload_all_models()
@@ -258,19 +273,8 @@ class Tensor2RTConvertor:
             engine = load_engine(engine_path, engine_info_path, onnx_path, lora_stack)
             _, clip, vae, _ = self.load_checkpoint(model_path, model=False)
             self.last_path = model_path
-            self.last_results = (
-                engine,
-                clip,
-                vae,
-                nodes.EmptyLatentImage().generate(width, height, batch_size=batch_size)[
-                    0
-                ],
-                model_name,
-                batch_size,
-                height,
-                width,
-            )
-            return self.last_results
+            self.models = (engine, clip, vae)
+            return results()
 
         if (
             not force_rebuild
