@@ -287,7 +287,8 @@ class Tensor2RTConvertor:
         comfy.model_management.soft_empty_cache()
 
         model, *_ = self.load_checkpoint(model_path, clip=False, vae=False)
-        # comfy.model_management.load_models_gpu([model], force_patch_weights=True)
+        # NOTE: this line is needed when not running in --high-vram
+        comfy.model_management.load_models_gpu([model], force_patch_weights=True)
 
         dtype = model.model.diffusion_model.dtype or torch.float16
         device = comfy.model_management.get_torch_device()
@@ -390,7 +391,7 @@ class Tensor2RTConvertor:
             print("engine_info", engine_info)
 
             config = builder.create_builder_config()
-            config.max_aux_streams = 7
+            config.max_aux_streams = 0
             config.builder_optimization_level = optimization_level
 
             # NOTE: disabled because trt.NetworkDefinitionCreationFlag.STRONGLY_TYPED is enabled
@@ -398,6 +399,7 @@ class Tensor2RTConvertor:
             config.set_flag(
                 trt.BuilderFlag.WEIGHT_STREAMING
             )  # save some VRAM by allowing weights to be streamed in
+            config.set_flag(trt.BuilderFlag.DIRECT_IO)
             # config.set_flag(trt.BuilderFlag.STRIP_PLAN)
             # config.set_flag(trt.BuilderFlag.REFIT_IDENTICAL)
             config.progress_monitor = TQDMProgressMonitor()
